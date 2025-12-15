@@ -200,4 +200,12 @@ if __name__ == "__main__":
     
     print(f"Starting PTT Site Watcher API on {host}:{port}")
     print(f"Auto-scan enabled: every {AUTO_SCAN_INTERVAL} seconds ({AUTO_SCAN_INTERVAL // 60} minutes)")
+    
+    # Reset scan status on startup in case of previous crash
+    try:
+        db.set_scanning(False)
+        print("Reset scan status to 'ready'")
+    except Exception as e:
+        print(f"Warning: Could not reset scan status: {e}")
+        
     app.run(host=host, port=port, debug=debug)
