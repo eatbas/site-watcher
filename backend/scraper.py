@@ -14,19 +14,13 @@ class PTTScraper:
     def __init__(self, headless: bool = True):
         self.headless = headless
 
-    async def scrape_announcements(self, page_num: int = 1, announcement_type: int = 3) -> List[Dict]:
+    async def scrape_all_announcements(self, start_page: int = 1, announcement_type: int = 3) -> List[Dict]:
         """
-        Scrape announcements from PTT website
-        
-        Args:
-            page_num: Page number to scrape
-            announcement_type: Type of announcements (3 = İhale Duyuruları)
-        
-        Returns:
-            List of announcement dictionaries with title, date_text, and link
+        Scrape announcements from ALL pages starting from start_page
         """
-        url = f"{self.BASE_URL}?page={page_num}&announcementType={announcement_type}"
-        announcements = []
+        all_announcements = []
+        page_num = start_page
+        max_pages = 20  # Safety limit
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.headless)
@@ -37,45 +31,52 @@ class PTTScraper:
             page = await context.new_page()
             
             try:
-                # Navigate to the page
-                await page.goto(url, wait_until="networkidle", timeout=30000)
-                
-                # Handle cookie consent if present
-                await self._handle_cookie_consent(page)
-                
-                # Wait for page content to load - use a more general selector
-                await page.wait_for_timeout(2000)  # Give JS time to render
-                
-                # Try multiple selectors for announcements
-                selectors_to_try = [
-                    'a[aria-label^="Daha Fazla Oku"]',
-                    'a[href*="/duyuru/"]',
-                    'a:has-text("Daha Fazla Oku")',
-                ]
-                
-                found = False
-                for selector in selectors_to_try:
-                    try:
-                        await page.wait_for_selector(selector, timeout=5000)
-                        found = True
+                while page_num < start_page + max_pages:
+                    print(f"Scraping page {page_num}...")
+                    url = f"{self.BASE_URL}?page={page_num}&announcementType={announcement_type}"
+                    
+                    # Navigate to the page
+                    await page.goto(url, wait_until="networkidle", timeout=30000)
+                    
+                    # Handle cookie consent only on first page
+                    if page_num == start_page:
+                        await self._handle_cookie_consent(page)
+                    
+                    # Wait for content
+                    await page.wait_for_timeout(2000)
+                    
+                    # Extract from current page
+                    page_announcements = await self._extract_announcements(page)
+                    
+                    if not page_announcements:
+                        print(f"No announcements found on page {page_num}. Stopping.")
                         break
-                    except Exception:
-                        continue
-                
-                if not found:
-                    # Try to extract from page anyway
-                    print("Warning: No standard selectors found, attempting extraction anyway")
-                
-                # Extract announcements
-                announcements = await self._extract_announcements(page)
-                
+                        
+                    all_announcements.extend(page_announcements)
+                    page_num += 1
+                    
+                    # Small delay between pages
+                    await page.wait_for_timeout(1000)
+                    
             except Exception as e:
-                print(f"Error scraping page: {e}")
-                raise
+                print(f"Error during scraping: {e}")
             finally:
                 await browser.close()
         
-        return announcements
+        # Remove duplicates
+        seen_links = set()
+        unique_announcements = []
+        for ann in all_announcements:
+            if ann["link"] not in seen_links:
+                seen_links.add(ann["link"])
+                unique_announcements.append(ann)
+                
+        return unique_announcements
+
+    async def scrape_announcements(self, page_num: int = 1, announcement_type: int = 3) -> List[Dict]:
+        """Kept for backward compatibility but effectively unused by scrape_sync now"""
+        return await self.scrape_all_announcements(start_page=page_num, announcement_type=announcement_type)
+
 
     async def _handle_cookie_consent(self, page: Page):
         """Handle the cookie consent popup if present"""
@@ -210,9 +211,9 @@ class PTTScraper:
 
 
 def scrape_sync(page_num: int = 1, announcement_type: int = 3, headless: bool = True) -> List[Dict]:
-    """Synchronous wrapper for the scraper"""
+    """Synchronous wrapper for the scraper that now scrapes ALL pages"""
     scraper = PTTScraper(headless=headless)
-    return asyncio.run(scraper.scrape_announcements(page_num, announcement_type))
+    return asyncio.run(scraper.scrape_all_announcements(start_page=page_num, announcement_type=announcement_type))
 
 
 if __name__ == "__main__":
