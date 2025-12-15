@@ -1,6 +1,6 @@
 import type { Announcement, Change, ScanStatus } from '../types';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export async function fetchStatus(): Promise<ScanStatus> {
     const response = await fetch(`${API_BASE}/status`);
