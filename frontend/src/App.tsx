@@ -1,11 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { StatusIndicator } from './components/StatusIndicator';
 import { ScanButton } from './components/ScanButton';
 import { AnnouncementList } from './components/AnnouncementList';
 import { ChangeLog } from './components/ChangeLog';
+import { ChangeAlert } from './components/ChangeAlert';
 import { fetchStatus, fetchAnnouncements, fetchChanges, triggerScan } from './services/api';
 import type { ScanStatus, Announcement, Change } from './types';
 import './App.css';
+
+const AUTO_SCAN_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
 
 function App() {
   const [status, setStatus] = useState<ScanStatus | null>(null);
@@ -13,6 +16,13 @@ function App() {
   const [changes, setChanges] = useState<Change[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [newChanges, setNewChanges] = useState<Change[]>([]);
+  const [showAlert, setShowAlert] = useState(false);
+  const [nextScanTime, setNextScanTime] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState<string>('');
+
+  const lastChangeCount = useRef(0);
+  const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -23,6 +33,19 @@ function App() {
       ]);
       setStatus(statusData);
       setAnnouncements(announcementsData);
+
+      // Check for new changes
+      if (changesData.length > lastChangeCount.current && lastChangeCount.current > 0) {
+        const newOnes = changesData.slice(0, changesData.length - lastChangeCount.current);
+        if (newOnes.length > 0) {
+          setNewChanges(newOnes);
+          setShowAlert(true);
+          // Play notification sound
+          playNotificationSound();
+        }
+      }
+      lastChangeCount.current = changesData.length;
+
       setChanges(changesData);
       setError(null);
     } catch (err) {
@@ -33,18 +56,82 @@ function App() {
     }
   }, []);
 
+  const playNotificationSound = () => {
+    // Create a simple beep sound
+    try {
+      const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      gainNode.gain.value = 0.3;
+
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (e) {
+      console.log('Could not play notification sound:', e);
+    }
+  };
+
+  const scheduleAutoScan = useCallback(() => {
+    // Clear existing timer
+    if (autoScanTimer.current) {
+      clearTimeout(autoScanTimer.current);
+    }
+
+    // Set next scan time
+    const next = new Date(Date.now() + AUTO_SCAN_INTERVAL);
+    setNextScanTime(next);
+
+    // Schedule auto-scan
+    autoScanTimer.current = setTimeout(async () => {
+      console.log('Auto-scan triggered');
+      await handleScan(true);
+    }, AUTO_SCAN_INTERVAL);
+  }, []);
+
+  // Update countdown every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (nextScanTime) {
+        const remaining = nextScanTime.getTime() - Date.now();
+        if (remaining > 0) {
+          const minutes = Math.floor(remaining / 60000);
+          const seconds = Math.floor((remaining % 60000) / 1000);
+          setCountdown(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+        } else {
+          setCountdown('Scanning...');
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [nextScanTime]);
+
   useEffect(() => {
     loadData();
+    scheduleAutoScan();
+
     // Poll for updates every 5 seconds when scanning
     const interval = setInterval(() => {
       if (status?.is_scanning) {
         loadData();
       }
     }, 5000);
-    return () => clearInterval(interval);
-  }, [loadData, status?.is_scanning]);
 
-  const handleScan = async () => {
+    return () => {
+      clearInterval(interval);
+      if (autoScanTimer.current) {
+        clearTimeout(autoScanTimer.current);
+      }
+    };
+  }, [loadData, status?.is_scanning, scheduleAutoScan]);
+
+  const handleScan = async (isAutoScan = false) => {
     try {
       await triggerScan();
       // Immediately reload status to show scanning state
@@ -57,16 +144,32 @@ function App() {
         setStatus(newStatus);
         if (!newStatus.is_scanning) {
           clearInterval(pollInterval);
-          loadData();
+          await loadData();
+          // Reschedule auto-scan after completion
+          scheduleAutoScan();
         }
       }, 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start scan');
+      if (!isAutoScan) {
+        // Only reschedule if manual scan failed
+        scheduleAutoScan();
+      }
     }
+  };
+
+  const dismissAlert = () => {
+    setShowAlert(false);
+    setNewChanges([]);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-dark-950 via-dark-900 to-dark-950">
+      {/* Change Alert */}
+      {showAlert && newChanges.length > 0 && (
+        <ChangeAlert changes={newChanges} onDismiss={dismissAlert} />
+      )}
+
       {/* Header */}
       <header className="border-b border-dark-800/50 backdrop-blur-xl bg-dark-950/50 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -91,13 +194,14 @@ function App() {
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-dark-300 bg-clip-text text-transparent">
                   PTT Site Watcher
                 </h1>
-                <p className="text-dark-400 text-sm">
-                  Monitor PTT announcements for changes
+                <p className="text-dark-400 text-sm flex items-center gap-2">
+                  <span>Auto-scan in</span>
+                  <span className="font-mono text-primary-400">{countdown || '--:--'}</span>
                 </p>
               </div>
             </div>
             <ScanButton
-              onClick={handleScan}
+              onClick={() => handleScan(false)}
               isScanning={status?.is_scanning ?? false}
               disabled={loading}
             />
@@ -152,6 +256,8 @@ function App() {
             >
               PTT İhale Duyuruları
             </a>
+            {' · '}
+            <span className="text-dark-600">Auto-scan every 10 minutes</span>
           </p>
         </div>
       </footer>

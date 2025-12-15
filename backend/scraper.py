@@ -43,8 +43,28 @@ class PTTScraper:
                 # Handle cookie consent if present
                 await self._handle_cookie_consent(page)
                 
-                # Wait for announcements to load
-                await page.wait_for_selector('a[href*="/duyuru/"]', timeout=10000)
+                # Wait for page content to load - use a more general selector
+                await page.wait_for_timeout(2000)  # Give JS time to render
+                
+                # Try multiple selectors for announcements
+                selectors_to_try = [
+                    'a[aria-label^="Daha Fazla Oku"]',
+                    'a[href*="/duyuru/"]',
+                    'a:has-text("Daha Fazla Oku")',
+                ]
+                
+                found = False
+                for selector in selectors_to_try:
+                    try:
+                        await page.wait_for_selector(selector, timeout=5000)
+                        found = True
+                        break
+                    except Exception:
+                        continue
+                
+                if not found:
+                    # Try to extract from page anyway
+                    print("Warning: No standard selectors found, attempting extraction anyway")
                 
                 # Extract announcements
                 announcements = await self._extract_announcements(page)
@@ -60,11 +80,22 @@ class PTTScraper:
     async def _handle_cookie_consent(self, page: Page):
         """Handle the cookie consent popup if present"""
         try:
-            # Look for the "Anladım" button
-            consent_button = page.locator('button:has-text("Anladım")')
-            if await consent_button.count() > 0:
-                await consent_button.click()
-                await page.wait_for_timeout(500)  # Wait for popup to close
+            # Look for the "Anladım" button with multiple strategies
+            consent_selectors = [
+                'button:has-text("Anladım")',
+                'button.cookie-consent-button',
+                '[data-testid="cookie-accept"]',
+            ]
+            
+            for selector in consent_selectors:
+                try:
+                    consent_button = page.locator(selector)
+                    if await consent_button.count() > 0:
+                        await consent_button.first.click()
+                        await page.wait_for_timeout(1000)  # Wait for popup to close
+                        return
+                except Exception:
+                    continue
         except Exception:
             # Cookie consent might not be present, continue
             pass
@@ -73,48 +104,84 @@ class PTTScraper:
         """Extract announcement data from the page"""
         announcements = []
         
-        # Find all announcement links
-        announcement_links = await page.query_selector_all('a[href*="/duyuru/"]')
+        # Try multiple selector strategies
+        link_elements = []
         
-        for link_element in announcement_links:
+        # Strategy 1: aria-label based selector
+        try:
+            link_elements = await page.query_selector_all('a[aria-label^="Daha Fazla Oku"]')
+        except Exception:
+            pass
+        
+        # Strategy 2: href based selector
+        if not link_elements:
+            try:
+                link_elements = await page.query_selector_all('a[href*="/duyuru/"]')
+            except Exception:
+                pass
+        
+        # Strategy 3: text based selector
+        if not link_elements:
+            try:
+                link_elements = await page.query_selector_all('a:has-text("Daha Fazla Oku")')
+            except Exception:
+                pass
+        
+        print(f"Found {len(link_elements)} announcement links")
+        
+        for link_element in link_elements:
             try:
                 href = await link_element.get_attribute("href")
+                aria_label = await link_element.get_attribute("aria-label")
                 
                 # Skip if this is not a valid announcement link
-                if not href or "/duyuru/" not in href:
+                if not href:
                     continue
                 
-                # Get the parent container to extract date and title
-                parent = await link_element.evaluate_handle("el => el.parentElement.parentElement")
-                parent_text = await parent.evaluate("el => el.innerText")
-                
-                # Parse the text content
-                lines = [line.strip() for line in parent_text.split('\n') if line.strip()]
-                
-                # Extract date parts and title
-                date_text = ""
+                # Extract title from aria-label if available
                 title = ""
+                if aria_label and aria_label.startswith("Daha Fazla Oku - "):
+                    title = aria_label.replace("Daha Fazla Oku - ", "").strip()
                 
-                # Look for date pattern (day, month, year on separate lines or together)
-                for i, line in enumerate(lines):
-                    # Check if this looks like a day number
-                    if line.isdigit() and 1 <= int(line) <= 31:
-                        # Next lines should be month and year
-                        if i + 2 < len(lines):
-                            month = lines[i + 1]
-                            year = lines[i + 2] if lines[i + 2].isdigit() else ""
-                            date_text = f"{line} {month} {year}".strip()
-                            # Title should be after the date
-                            if i + 3 < len(lines):
-                                title = lines[i + 3]
-                        break
+                # Get date from parent container
+                date_text = ""
+                try:
+                    # Navigate up to find the container with date info
+                    parent = await link_element.evaluate_handle("el => el.closest('div') || el.parentElement.parentElement")
+                    parent_text = await parent.evaluate("el => el.innerText")
+                    
+                    # Parse the text content
+                    lines = [line.strip() for line in parent_text.split('\n') if line.strip()]
+                    
+                    # Look for date pattern (day, month, year)
+                    for i, line in enumerate(lines):
+                        # Check if this looks like a day number
+                        if line.isdigit() and 1 <= int(line) <= 31:
+                            # Next lines should be month and year
+                            if i + 2 < len(lines):
+                                month = lines[i + 1]
+                                year = lines[i + 2] if lines[i + 2].isdigit() else ""
+                                date_text = f"{line} {month} {year}".strip()
+                            break
+                    
+                    # If no title from aria-label, try to extract from parent text
+                    if not title:
+                        for line in lines:
+                            if line and line not in ["İlan Tarihi", "Daha Fazla Oku"] and not line.isdigit():
+                                # Skip Turkish month names
+                                if line not in ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", 
+                                               "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]:
+                                    title = line
+                                    break
+                                    
+                except Exception as e:
+                    print(f"Error getting parent info: {e}")
                 
-                # Fallback: if we didn't find structured data, use the link text
+                # Fallback title
                 if not title:
                     title = await link_element.inner_text()
                     if title.lower() in ["daha fazla oku", "read more"]:
-                        # Get text from parent
-                        title = lines[0] if lines else ""
+                        title = href.split("/")[-1].replace("-", " ").title() if href else "Unknown"
                 
                 # Construct full URL
                 full_link = f"https://www.ptt.gov.tr{href}" if href.startswith("/") else href
@@ -138,6 +205,7 @@ class PTTScraper:
                 seen_links.add(ann["link"])
                 unique_announcements.append(ann)
         
+        print(f"Extracted {len(unique_announcements)} unique announcements")
         return unique_announcements
 
 
