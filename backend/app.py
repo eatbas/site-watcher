@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from database import Database
 from scraper import scrape_sync
+from email_service import send_change_notification
 
 # Load environment variables
 load_dotenv()
@@ -25,8 +26,11 @@ db = Database(db_path)
 # Lock for scan operations
 scan_lock = threading.Lock()
 
-# Auto-scan configuration
-AUTO_SCAN_INTERVAL = int(os.getenv("AUTO_SCAN_INTERVAL", 600))  # 10 minutes in seconds
+# Auto-scan configuration from database
+def get_auto_scan_interval():
+    settings = db.get_settings()
+    return settings.get("refresh_interval", 600)
+
 auto_scan_enabled = True
 last_auto_scan = None
 
@@ -63,6 +67,15 @@ def perform_scan():
             db.set_scanning(False)
             last_auto_scan = datetime.now()
             
+            # Send email notification if there are changes
+            if new_changes:
+                settings = db.get_settings()
+                changes_dict = [c.to_dict() for c in new_changes]
+                try:
+                    send_change_notification(changes_dict, settings)
+                except Exception as email_error:
+                    print(f"Email notification failed: {email_error}")
+            
             return new_changes
             
         except Exception as e:
@@ -75,12 +88,16 @@ def auto_scan_worker():
     """Background worker for automatic scanning"""
     global last_auto_scan
     
-    print(f"Auto-scan worker started. Interval: {AUTO_SCAN_INTERVAL} seconds")
+    interval = get_auto_scan_interval()
+    print(f"Auto-scan worker started. Interval: {interval} seconds")
     
     while auto_scan_enabled:
         try:
+            # Get current interval from settings
+            interval = get_auto_scan_interval()
+            
             # Wait for the interval
-            time.sleep(AUTO_SCAN_INTERVAL)
+            time.sleep(interval)
             
             if not auto_scan_enabled:
                 break
@@ -100,12 +117,13 @@ def auto_scan_worker():
 def get_status():
     """Get the current scan status"""
     status = db.get_scan_status()
+    interval = get_auto_scan_interval()
     status["auto_scan_enabled"] = auto_scan_enabled
-    status["auto_scan_interval"] = AUTO_SCAN_INTERVAL
+    status["auto_scan_interval"] = interval
     status["next_auto_scan"] = None
     
     if last_auto_scan and auto_scan_enabled:
-        next_scan = last_auto_scan.timestamp() + AUTO_SCAN_INTERVAL
+        next_scan = last_auto_scan.timestamp() + interval
         status["next_auto_scan"] = datetime.fromtimestamp(next_scan).isoformat()
     
     return jsonify(status)
@@ -179,8 +197,68 @@ def toggle_auto_scan():
     
     return jsonify({
         "auto_scan_enabled": auto_scan_enabled,
-        "auto_scan_interval": AUTO_SCAN_INTERVAL
+        "auto_scan_interval": get_auto_scan_interval()
     })
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    """Get the current settings"""
+    settings = db.get_settings()
+    # Don't expose SMTP password
+    settings["smtp_password"] = "********" if settings.get("smtp_password") else ""
+    return jsonify(settings)
+
+
+@app.route("/api/settings", methods=["PUT"])
+def update_settings():
+    """Update settings"""
+    data = request.get_json() or {}
+    
+    # Get current settings to preserve password if not changed
+    current_settings = db.get_settings()
+    
+    # If password is masked, keep the old one
+    if data.get("smtp_password") == "********":
+        data["smtp_password"] = current_settings.get("smtp_password", "")
+    
+    db.update_settings(data)
+    
+    # Return updated settings (with masked password)
+    updated = db.get_settings()
+    updated["smtp_password"] = "********" if updated.get("smtp_password") else ""
+    return jsonify(updated)
+
+
+@app.route("/api/settings/test-email", methods=["POST"])
+def test_email():
+    """Send a test email to verify configuration"""
+    settings = db.get_settings()
+    
+    if not settings.get("email_enabled"):
+        return jsonify({"error": "Email notifications are disabled"}), 400
+    
+    if not settings.get("email_recipients"):
+        return jsonify({"error": "No recipients configured"}), 400
+    
+    if not settings.get("smtp_password"):
+        return jsonify({"error": "SMTP password not configured"}), 400
+    
+    # Create a test change
+    test_changes = [{
+        "change_type": "new",
+        "title": "Test Email - PTT Site Watcher",
+        "detected_at": datetime.now().isoformat()
+    }]
+    
+    try:
+        success = send_change_notification(test_changes, settings)
+        if success:
+            return jsonify({"message": "Test email sent successfully!"})
+        else:
+            return jsonify({"error": "Failed to send test email"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/health", methods=["GET"])
@@ -198,8 +276,9 @@ if __name__ == "__main__":
     auto_scan_thread = threading.Thread(target=auto_scan_worker, daemon=True)
     auto_scan_thread.start()
     
+    interval = get_auto_scan_interval()
     print(f"Starting PTT Site Watcher API on {host}:{port}")
-    print(f"Auto-scan enabled: every {AUTO_SCAN_INTERVAL} seconds ({AUTO_SCAN_INTERVAL // 60} minutes)")
+    print(f"Auto-scan enabled: every {interval} seconds ({interval // 60} minutes)")
     
     # Reset scan status on startup in case of previous crash
     try:

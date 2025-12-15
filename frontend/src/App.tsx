@@ -4,6 +4,7 @@ import { ScanButton } from './components/ScanButton';
 import { AnnouncementList } from './components/AnnouncementList';
 import { ChangeLog } from './components/ChangeLog';
 import { ChangeAlert } from './components/ChangeAlert';
+import { SettingsPage } from './components/SettingsPage';
 import { fetchStatus, fetchAnnouncements, fetchChanges, triggerScan } from './services/api';
 import type { ScanStatus, Announcement, Change } from './types';
 import './App.css';
@@ -20,6 +21,7 @@ function App() {
   const [showAlert, setShowAlert] = useState(false);
   const [nextScanTime, setNextScanTime] = useState<Date | null>(null);
   const [countdown, setCountdown] = useState<string>('');
+  const [showSettings, setShowSettings] = useState(false);
 
   const lastChangeCount = useRef(0);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,16 +85,19 @@ function App() {
       clearTimeout(autoScanTimer.current);
     }
 
+    // Get interval from status or default to 10 minutes
+    const interval = status?.auto_scan_interval ? status.auto_scan_interval * 1000 : AUTO_SCAN_INTERVAL;
+
     // Set next scan time
-    const next = new Date(Date.now() + AUTO_SCAN_INTERVAL);
+    const next = new Date(Date.now() + interval);
     setNextScanTime(next);
 
     // Schedule auto-scan
     autoScanTimer.current = setTimeout(async () => {
       console.log('Auto-scan triggered');
       await handleScan(true);
-    }, AUTO_SCAN_INTERVAL);
-  }, []);
+    }, interval);
+  }, [status?.auto_scan_interval]);
 
   // Update countdown every second
   useEffect(() => {
@@ -163,6 +168,18 @@ function App() {
     setNewChanges([]);
   };
 
+  // If showing settings, render settings page
+  if (showSettings) {
+    return (
+      <SettingsPage
+        onClose={() => {
+          setShowSettings(false);
+          loadData(); // Reload data to get updated settings
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-dark-950 via-dark-900 to-dark-950">
       {/* Change Alert */}
@@ -200,11 +217,31 @@ function App() {
                 </p>
               </div>
             </div>
-            <ScanButton
-              onClick={() => handleScan(false)}
-              isScanning={status?.is_scanning ?? false}
-              disabled={loading}
-            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowSettings(true)}
+                className="w-10 h-10 rounded-xl bg-dark-800/50 flex items-center justify-center hover:bg-dark-700/50 transition-colors border border-dark-700/50"
+                title="Settings"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5 text-dark-300"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+              <ScanButton
+                onClick={() => handleScan(false)}
+                isScanning={status?.is_scanning ?? false}
+                disabled={loading}
+              />
+            </div>
           </div>
         </div>
       </header>

@@ -72,6 +72,27 @@ class Database:
                 VALUES (1, NULL, 0)
             """)
             
+            # Settings table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    refresh_interval INTEGER DEFAULT 600,
+                    email_enabled INTEGER DEFAULT 0,
+                    email_sender TEXT DEFAULT '',
+                    email_recipients TEXT DEFAULT '[]',
+                    smtp_server TEXT DEFAULT 'smtp.office365.com',
+                    smtp_port INTEGER DEFAULT 587,
+                    smtp_username TEXT DEFAULT '',
+                    smtp_password TEXT DEFAULT ''
+                )
+            """)
+            
+            # Initialize settings if not exists
+            cursor.execute("""
+                INSERT OR IGNORE INTO settings (id, refresh_interval, email_enabled, email_sender, email_recipients)
+                VALUES (1, 600, 0, '', '[]')
+            """)
+            
             conn.commit()
 
     @staticmethod
@@ -293,4 +314,63 @@ class Database:
                     "UPDATE scan_status SET is_scanning = 0, last_scan = ?, error = ? WHERE id = 1",
                     (datetime.now().isoformat(), error)
                 )
+            conn.commit()
+
+    def get_settings(self) -> dict:
+        """Get the current settings"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM settings WHERE id = 1")
+            row = cursor.fetchone()
+            
+            if row:
+                import json
+                recipients = json.loads(row["email_recipients"]) if row["email_recipients"] else []
+                return {
+                    "refresh_interval": row["refresh_interval"],
+                    "email_enabled": bool(row["email_enabled"]),
+                    "email_sender": row["email_sender"],
+                    "email_recipients": recipients,
+                    "smtp_server": row["smtp_server"],
+                    "smtp_port": row["smtp_port"],
+                    "smtp_username": row["smtp_username"],
+                    "smtp_password": row["smtp_password"],
+                }
+            return {
+                "refresh_interval": 600,
+                "email_enabled": False,
+                "email_sender": "",
+                "email_recipients": [],
+                "smtp_server": "smtp.office365.com",
+                "smtp_port": 587,
+                "smtp_username": "",
+                "smtp_password": "",
+            }
+
+    def update_settings(self, settings: dict):
+        """Update the settings"""
+        import json
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE settings SET 
+                    refresh_interval = ?,
+                    email_enabled = ?,
+                    email_sender = ?,
+                    email_recipients = ?,
+                    smtp_server = ?,
+                    smtp_port = ?,
+                    smtp_username = ?,
+                    smtp_password = ?
+                WHERE id = 1
+            """, (
+                settings.get("refresh_interval", 600),
+                1 if settings.get("email_enabled", False) else 0,
+                settings.get("email_sender", ""),
+                json.dumps(settings.get("email_recipients", [])),
+                settings.get("smtp_server", "smtp.office365.com"),
+                settings.get("smtp_port", 587),
+                settings.get("smtp_username", ""),
+                settings.get("smtp_password", ""),
+            ))
             conn.commit()

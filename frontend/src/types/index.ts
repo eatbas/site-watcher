@@ -23,4 +23,17 @@ export interface ScanStatus {
     is_scanning: boolean;
     announcement_count: number;
     error: string | null;
+    auto_scan_enabled?: boolean;
+    auto_scan_interval?: number;
+}
+
+export interface Settings {
+    refresh_interval: number;
+    email_enabled: boolean;
+    email_sender: string;
+    email_recipients: string[];
+    smtp_server: string;
+    smtp_port: number;
+    smtp_username: string;
+    smtp_password: string;
 }

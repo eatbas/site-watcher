@@ -30,3 +30,21 @@ export async function triggerScan(): Promise<{ message: string }> {
     }
     return response.json();
 }
+
+export async function fetchSettings(): Promise<import('../types').Settings> {
+    const response = await fetch(`${API_BASE}/settings`);
+    if (!response.ok) throw new Error('Failed to fetch settings');
+    return response.json();
+}
+
+export async function updateSettings(settings: Partial<import('../types').Settings>): Promise<import('../types').Settings> {
+    const response = await fetch(`${API_BASE}/settings`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings),
+    });
+    if (!response.ok) throw new Error('Failed to update settings');
+    return response.json();
+}
