@@ -16,6 +16,7 @@ def format_change_html(change: dict) -> str:
     change_type = change.get("change_type", "unknown")
     title = change.get("title", "Unknown")
     detected_at = change.get("detected_at", "")
+    link = change.get("new_content", "") or change.get("old_content", "")  # link is stored in content fields
     
     colors = {
         "new": "#22c55e",      # green
@@ -25,11 +26,17 @@ def format_change_html(change: dict) -> str:
     color = colors.get(change_type, "#6b7280")
     
     labels = {
-        "new": "🆕 New",
-        "modified": "✏️ Modified",
-        "removed": "🗑️ Removed",
+        "new": "🆕 YENİ",
+        "modified": "✏️ DEĞİŞTİ",
+        "removed": "🗑️ KALDIRILDI",
     }
-    label = labels.get(change_type, "Unknown")
+    label = labels.get(change_type, "Bilinmiyor")
+    
+    # Create clickable title if link is available
+    if link and change_type != "removed":
+        title_html = f'<a href="{link}" style="color: #2563eb; text-decoration: none;">{title}</a>'
+    else:
+        title_html = title
     
     return f"""
     <tr>
@@ -39,7 +46,7 @@ def format_change_html(change: dict) -> str:
             </span>
         </td>
         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-            {title}
+            {title_html}
         </td>
         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; color: #6b7280; font-size: 12px;">
             {detected_at}
