@@ -4,7 +4,7 @@ Flask API for PTT Site Watcher
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -32,12 +32,11 @@ def get_auto_scan_interval():
     return settings.get("refresh_interval", 600)
 
 auto_scan_enabled = True
-last_auto_scan = None
+next_auto_scan_time = None  # Tracks when the next auto-scan will occur
 
 
 def perform_scan():
     """Execute a scan and return changes detected"""
-    global last_auto_scan
     
     with scan_lock:
         try:
@@ -130,7 +129,7 @@ def perform_scan():
 
 def auto_scan_worker():
     """Background worker for automatic scanning"""
-    global last_auto_scan
+    global next_auto_scan_time
     
     interval = get_auto_scan_interval()
     print(f"Auto-scan worker started. Interval: {interval} seconds")
@@ -139,6 +138,10 @@ def auto_scan_worker():
         try:
             # Get current interval from settings
             interval = get_auto_scan_interval()
+            
+            # Set the next scan time BEFORE sleeping so frontend knows when it will happen
+            next_auto_scan_time = datetime.now() + timedelta(seconds=interval)
+            print(f"Next auto-scan scheduled for: {next_auto_scan_time}")
             
             # Wait for the interval
             time.sleep(interval)
@@ -164,11 +167,7 @@ def get_status():
     interval = get_auto_scan_interval()
     status["auto_scan_enabled"] = auto_scan_enabled
     status["auto_scan_interval"] = interval
-    status["next_auto_scan"] = None
-    
-    if last_auto_scan and auto_scan_enabled:
-        next_scan = last_auto_scan.timestamp() + interval
-        status["next_auto_scan"] = datetime.fromtimestamp(next_scan).isoformat()
+    status["next_auto_scan"] = next_auto_scan_time.isoformat() if next_auto_scan_time else None
     
     return jsonify(status)
 
@@ -312,9 +311,9 @@ def health_check():
 
 
 if __name__ == "__main__":
-    # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
-    # Note: No 'global' needed here as this is module level, not inside a function
-    last_auto_scan = datetime.now()
+    # Initialize next_auto_scan_time so frontend gets a valid countdown immediately
+    interval = get_auto_scan_interval()
+    next_auto_scan_time = datetime.now() + timedelta(seconds=interval)
     
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 5000))
