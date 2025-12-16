@@ -312,6 +312,11 @@ def health_check():
 
 
 if __name__ == "__main__":
+    # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
+    # Must declare global before any reference to it in this scope
+    global last_auto_scan
+    last_auto_scan = datetime.now()
+    
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "0") == "1"
@@ -330,9 +335,5 @@ if __name__ == "__main__":
         print("Reset scan status to 'ready'")
     except Exception as e:
         print(f"Warning: Could not reset scan status: {e}")
-    
-    # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
-    global last_auto_scan
-    last_auto_scan = datetime.now()
         
     app.run(host=host, port=port, debug=debug)
