@@ -9,8 +9,6 @@ import { fetchStatus, fetchAnnouncements, fetchChanges, triggerScan } from './se
 import type { ScanStatus, Announcement, Change } from './types';
 import './App.css';
 
-const AUTO_SCAN_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
-
 function App() {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
