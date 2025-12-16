@@ -46,6 +46,47 @@ def perform_scan():
             # Scrape announcements
             announcements = scrape_sync(headless=True)
             
+            # Get existing announcement count to detect potential false removals
+            existing_announcements = db.get_all_announcements()
+            existing_count = len(existing_announcements)
+            
+            # VERIFICATION: If we got 0 results but there were existing items,
+            # or if all existing items would be removed, wait and re-check
+            if existing_count > 0:
+                scraped_count = len(announcements)
+                
+                # Case 1: No items scraped at all - likely a scraping failure
+                if scraped_count == 0:
+                    print(f"⚠️ Warning: Scraped 0 announcements but {existing_count} exist in DB. Waiting 5 seconds to verify...")
+                    time.sleep(5)
+                    
+                    # Re-scrape to confirm
+                    announcements = scrape_sync(headless=True)
+                    scraped_count = len(announcements)
+                    print(f"⚠️ Verification scrape got {scraped_count} announcements")
+                    
+                    # If still 0, skip the removal detection to avoid false positives
+                    if scraped_count == 0:
+                        print(f"⚠️ Still 0 announcements after verification. Skipping removal detection to avoid false positives.")
+                        db.set_scanning(False)
+                        last_auto_scan = datetime.now()
+                        return []
+                
+                # Case 2: Check if all existing items would be marked as removed
+                else:
+                    scraped_links = set(ann["link"] for ann in announcements)
+                    existing_links = set(a.link for a in existing_announcements if a.link)
+                    would_be_removed = existing_links - scraped_links
+                    
+                    # If more than 50% would be removed, verify
+                    if len(would_be_removed) > existing_count * 0.5 and len(would_be_removed) > 3:
+                        print(f"⚠️ Warning: {len(would_be_removed)} of {existing_count} would be removed. Waiting 5 seconds to verify...")
+                        time.sleep(5)
+                        
+                        # Re-scrape to confirm
+                        announcements = scrape_sync(headless=True)
+                        print(f"⚠️ Verification scrape got {len(announcements)} announcements")
+            
             # Process each announcement
             new_changes = []
             current_links = []
@@ -60,9 +101,12 @@ def perform_scan():
                 if change:
                     new_changes.append(change)
             
-            # Mark removed announcements
-            removed_changes = db.mark_removed_announcements(current_links)
-            new_changes.extend(removed_changes)
+            # Mark removed announcements (only if we got valid results)
+            if len(current_links) > 0:
+                removed_changes = db.mark_removed_announcements(current_links)
+                new_changes.extend(removed_changes)
+            else:
+                print("⚠️ Skipping removal detection due to empty scrape results")
             
             db.set_scanning(False)
             last_auto_scan = datetime.now()
@@ -286,5 +330,8 @@ if __name__ == "__main__":
         print("Reset scan status to 'ready'")
     except Exception as e:
         print(f"Warning: Could not reset scan status: {e}")
+    
+    # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
+    last_auto_scan = datetime.now()
         
     app.run(host=host, port=port, debug=debug)

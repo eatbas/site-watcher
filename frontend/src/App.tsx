@@ -19,12 +19,10 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [newChanges, setNewChanges] = useState<Change[]>([]);
   const [showAlert, setShowAlert] = useState(false);
-  const [nextScanTime, setNextScanTime] = useState<Date | null>(null);
   const [countdown, setCountdown] = useState<string>('');
   const [showSettings, setShowSettings] = useState(false);
 
   const lastChangeCount = useRef(0);
-  const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -79,30 +77,13 @@ function App() {
     }
   };
 
-  const scheduleAutoScan = useCallback(() => {
-    // Clear existing timer
-    if (autoScanTimer.current) {
-      clearTimeout(autoScanTimer.current);
-    }
+  // Server handles auto-scanning, we just update the countdown display from server status
 
-    // Get interval from status or default to 10 minutes
-    const interval = status?.auto_scan_interval ? status.auto_scan_interval * 1000 : AUTO_SCAN_INTERVAL;
-
-    // Set next scan time
-    const next = new Date(Date.now() + interval);
-    setNextScanTime(next);
-
-    // Schedule auto-scan
-    autoScanTimer.current = setTimeout(async () => {
-      console.log('Auto-scan triggered');
-      await handleScan(true);
-    }, interval);
-  }, [status?.auto_scan_interval]);
-
-  // Update countdown every second
+  // Update countdown every second based on server's next_auto_scan
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (nextScanTime) {
+    const updateCountdown = () => {
+      if (status?.next_auto_scan) {
+        const nextScanTime = new Date(status.next_auto_scan);
         const remaining = nextScanTime.getTime() - Date.now();
         if (remaining > 0) {
           const minutes = Math.floor(remaining / 60000);
@@ -111,32 +92,34 @@ function App() {
         } else {
           setCountdown('Scanning...');
         }
+      } else if (status?.is_scanning) {
+        setCountdown('Scanning...');
+      } else {
+        // No next scan time from server yet, show loading
+        setCountdown('--:--');
       }
-    }, 1000);
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
 
     return () => clearInterval(interval);
-  }, [nextScanTime]);
+  }, [status?.next_auto_scan, status?.is_scanning]);
 
   useEffect(() => {
     loadData();
-    scheduleAutoScan();
 
-    // Poll for updates every 5 seconds when scanning
+    // Poll for status updates every 5 seconds to stay in sync with server
     const interval = setInterval(() => {
-      if (status?.is_scanning) {
-        loadData();
-      }
+      loadData();
     }, 5000);
 
     return () => {
       clearInterval(interval);
-      if (autoScanTimer.current) {
-        clearTimeout(autoScanTimer.current);
-      }
     };
-  }, [loadData, status?.is_scanning, scheduleAutoScan]);
+  }, [loadData]);
 
-  const handleScan = async (isAutoScan = false) => {
+  const handleScan = async () => {
     try {
       await triggerScan();
       // Immediately reload status to show scanning state
@@ -150,16 +133,10 @@ function App() {
         if (!newStatus.is_scanning) {
           clearInterval(pollInterval);
           await loadData();
-          // Reschedule auto-scan after completion
-          scheduleAutoScan();
         }
       }, 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start scan');
-      if (!isAutoScan) {
-        // Only reschedule if manual scan failed
-        scheduleAutoScan();
-      }
     }
   };
 
@@ -237,7 +214,7 @@ function App() {
                 </svg>
               </button>
               <ScanButton
-                onClick={() => handleScan(false)}
+                onClick={() => handleScan()}
                 isScanning={status?.is_scanning ?? false}
                 disabled={loading}
               />
