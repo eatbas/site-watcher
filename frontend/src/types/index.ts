@@ -25,6 +25,7 @@ export interface ScanStatus {
     error: string | null;
     auto_scan_enabled?: boolean;
     auto_scan_interval?: number;
+    next_auto_scan?: string | null;
 }
 
 export interface Settings {
