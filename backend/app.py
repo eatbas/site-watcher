@@ -313,8 +313,7 @@ def health_check():
 
 if __name__ == "__main__":
     # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
-    # Must declare global before any reference to it in this scope
-    global last_auto_scan
+    # Note: No 'global' needed here as this is module level, not inside a function
     last_auto_scan = datetime.now()
     
     host = os.getenv("HOST", "0.0.0.0")
