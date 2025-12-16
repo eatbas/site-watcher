@@ -332,6 +332,7 @@ if __name__ == "__main__":
         print(f"Warning: Could not reset scan status: {e}")
     
     # Initialize last_auto_scan so frontend gets a valid next_auto_scan immediately
+    global last_auto_scan
     last_auto_scan = datetime.now()
         
     app.run(host=host, port=port, debug=debug)
