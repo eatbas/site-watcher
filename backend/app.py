@@ -4,7 +4,7 @@ Flask API for PTT Site Watcher
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -140,8 +140,9 @@ def auto_scan_worker():
             interval = get_auto_scan_interval()
             
             # Set the next scan time BEFORE sleeping so frontend knows when it will happen
-            next_auto_scan_time = datetime.now() + timedelta(seconds=interval)
-            print(f"Next auto-scan scheduled for: {next_auto_scan_time}")
+            # Use UTC to avoid timezone confusion with frontend
+            next_auto_scan_time = datetime.now(timezone.utc) + timedelta(seconds=interval)
+            print(f"Next auto-scan scheduled for: {next_auto_scan_time.isoformat()}")
             
             # Wait for the interval
             time.sleep(interval)
@@ -312,8 +313,9 @@ def health_check():
 
 if __name__ == "__main__":
     # Initialize next_auto_scan_time so frontend gets a valid countdown immediately
+    # Use UTC for timezone consistency
     interval = get_auto_scan_interval()
-    next_auto_scan_time = datetime.now() + timedelta(seconds=interval)
+    next_auto_scan_time = datetime.now(timezone.utc) + timedelta(seconds=interval)
     
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 5000))
